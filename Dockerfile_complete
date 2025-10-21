@@ -1,0 +1,196 @@
+# === AI Image Generator - Complete Production Dockerfile ===
+# 使用官方Python 3.11镜像作为基础
+FROM python:3.11-slim
+
+# 设置维护者信息
+LABEL maintainer="AI Image Generator Team"
+LABEL description="Complete AI Image Generator with Multi-Model Support"
+LABEL version="2.0.0"
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    APP_HOME=/app \
+    STREAMLIT_SERVER_PORT=8501 \
+    STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
+    STREAMLIT_SERVER_HEADLESS=true \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+    STREAMLIT_SERVER_ENABLE_CORS=false \
+    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y \
+    # 基础工具
+    curl \
+    wget \
+    git \
+    # 图像处理库
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libglib2.0-dev \
+    # OpenCV依赖
+    libgl1-mesa-glx \
+    libgthread-2.0-0 \
+    # 网络工具
+    ca-certificates \
+    # 清理安装缓存
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# 创建非特权用户
+RUN groupadd -r appuser && useradd -r -g appuser -d $APP_HOME -s /sbin/nologin -c "App User" appuser
+
+# 创建应用目录
+RUN mkdir -p $APP_HOME && chown -R appuser:appuser $APP_HOME
+
+# 设置工作目录
+WORKDIR $APP_HOME
+
+# 先复制requirements文件以利用Docker缓存
+COPY requirements_complete.txt requirements.txt
+
+# 升级pip并安装Python依赖
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 复制应用代码
+COPY app_complete.py app.py
+COPY secrets_example.toml secrets_example.toml
+COPY README_Enhanced.md README.md
+
+# 创建必要的目录
+RUN mkdir -p .streamlit && \
+    mkdir -p data && \
+    mkdir -p logs && \
+    mkdir -p temp
+
+# 创建Streamlit配置文件
+RUN echo '\
+[server]\n\
+port = 8501\n\
+address = "0.0.0.0"\n\
+headless = true\n\
+enableCORS = false\n\
+enableXsrfProtection = false\n\
+\n\
+[browser]\n\
+gatherUsageStats = false\n\
+\n\
+[theme]\n\
+primaryColor = "#FF6B6B"\n\
+backgroundColor = "#FFFFFF"\n\
+secondaryBackgroundColor = "#F0F2F6"\n\
+textColor = "#262730"\n\
+' > .streamlit/config.toml
+
+# 设置文件权限
+RUN chown -R appuser:appuser $APP_HOME && \
+    chmod +x app.py
+
+# 切换到非特权用户
+USER appuser
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+# 暴露端口
+EXPOSE 8501
+
+# 创建启动脚本
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "========================================"\n\
+echo "🎨 AI Image Generator Starting..."\n\
+echo "Version: 2.0.0"\n\
+echo "Port: ${STREAMLIT_SERVER_PORT}"\n\
+echo "========================================"\n\
+\n\
+# 检查环境\n\
+echo "⚙️ Checking environment..."\n\
+if [ -z "$STREAMLIT_SERVER_PORT" ]; then\n\
+    export STREAMLIT_SERVER_PORT=8501\n\
+fi\n\
+\n\
+if [ -z "$STREAMLIT_SERVER_ADDRESS" ]; then\n\
+    export STREAMLIT_SERVER_ADDRESS=0.0.0.0\n\
+fi\n\
+\n\
+# 检查配置文件\n\
+echo "📁 Checking configuration..."\n\
+if [ ! -f ".streamlit/secrets.toml" ] && [ -n "$STREAMLIT_SECRETS" ]; then\n\
+    echo "🔑 Creating secrets from environment..."\n\
+    echo "$STREAMLIT_SECRETS" > .streamlit/secrets.toml\n\
+fi\n\
+\n\
+# 检查网络连接\n\
+echo "🌐 Testing network connectivity..."\n\
+if ! curl -s --connect-timeout 5 https://httpbin.org/status/200 > /dev/null; then\n\
+    echo "⚠️ Warning: Network connectivity issues detected"\n\
+else\n\
+    echo "✅ Network connectivity OK"\n\
+fi\n\
+\n\
+# 检查磁盘空间\n\
+echo "💾 Checking disk space..."\n\
+df -h /\n\
+\n\
+# 检查内存\n\
+echo "📦 Checking memory..."\n\
+free -h\n\
+\n\
+echo "========================================"\n\
+echo "🚀 Starting Streamlit application..."\n\
+echo "========================================"\n\
+\n\
+# 启动应用\n\
+exec streamlit run app.py \\\
+    --server.port=$STREAMLIT_SERVER_PORT \\\
+    --server.address=$STREAMLIT_SERVER_ADDRESS \\\
+    --server.headless=true \\\
+    --browser.gatherUsageStats=false \\\
+    --server.enableCORS=false \\\
+    --server.enableXsrfProtection=false\n\
+' > start.sh && chmod +x start.sh
+
+# 设置默认命令
+CMD ["./start.sh"]
+
+# === 构建和部署说明 ===
+# 
+# 构建命令:
+# docker build -f Dockerfile_complete -t ai-image-generator:latest .
+#
+# 运行命令:
+# docker run -p 8501:8501 ai-image-generator:latest
+#
+# 使用环境变量Secrets:
+# docker run -p 8501:8501 -e STREAMLIT_SECRETS="$(cat .streamlit/secrets.toml)" ai-image-generator:latest
+#
+# 使用数据卷:
+# docker run -p 8501:8501 -v $(pwd)/data:/app/data ai-image-generator:latest
+#
+# Docker Compose 示例:
+# version: '3.8'
+# services:
+#   ai-image-generator:
+#     image: ai-image-generator:latest
+#     ports:
+#       - "8501:8501"
+#     environment:
+#       - STREAMLIT_SECRETS=${STREAMLIT_SECRETS}
+#     volumes:
+#       - ./data:/app/data
+#       - ./logs:/app/logs
+#     restart: unless-stopped
+#     healthcheck:
+#       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 3
